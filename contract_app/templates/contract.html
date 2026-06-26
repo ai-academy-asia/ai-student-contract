@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="mn">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Academy Asia — Сургалтын гэрээ</title>
+  <link rel="icon" href="/static/logo.png" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      theme: { extend: {
+        fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+        colors: { brand: { 600: '#2563eb', 700: '#1d4ed8', 50: '#eff6ff' } },
+      } },
+    };
+  </script>
+  <style>
+    html { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    body { background:
+      radial-gradient(900px 400px at 100% -10%, #eff6ff 0%, transparent 60%),
+      radial-gradient(700px 350px at -10% 0%, #f0f9ff 0%, transparent 55%), #f8fafc; }
+    input[type="date"] { color-scheme: light; }
+  </style>
+</head>
+<body class="min-h-screen text-slate-900">
+  <main id="root" class="max-w-2xl mx-auto px-6 py-10">
+    <div class="flex items-center justify-center py-24">
+      <div class="w-8 h-8 border-2 border-brand-600 border-t-transparent rounded-full animate-spin"></div>
+    </div>
+  </main>
+
+  <script>window.SLUG = "{{ slug }}";</script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

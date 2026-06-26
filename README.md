@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Asia — Сургалтын гэрээ (FastAPI)
 
-## Getting Started
+Суралцагч линкээрээ орж, мэдээллээ шалгаад, гэрээгээ урьдчилан хараад, гарын үсэг
+зурж, бөглөгдсөн PDF-ээ татаж авдаг систем. Гэрээний араас classCode-д тохирох
+хичээлийн хөтөлбөр автоматаар залгагдана.
 
-First, run the development server:
+> Бүхэлдээ **Python (FastAPI + PyMuPDF)** дээр. Node.js / Next.js хэрэглэхгүй.
+> (Хуучин Next.js хувилбар `legacy_nextjs/`-д хадгалагдсан.)
+
+## Суулгах
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+python3 -m pip install -r requirements.txt
+# (Times New Roman фонт байхгүй орчинд: PDF_FONT=<crillic .ttf зам> тохируулна)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Өгөгдлийн сан (PostgreSQL)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Гэрээ үүсгэх бүрд хэрэглэгчийн мэдээлэл, **PDF файл**, **гарын үсэг** хадгалагдана.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+export DATABASE_URL="postgresql://<user>:<pass>@<host>:5432/contract_db"
+# default: postgresql://admin:admin123@localhost:5432/contract_db (локал Docker)
+```
 
-## Learn More
+- Хүснэгт `contracts` нь эхлэхэд автоматаар үүснэ (`db.init_db`).
+- PDF → `storage/pdfs/`, гарын үсэг → `storage/signatures/` (зам нь DB-д бичигдэнэ).
+- DB байхгүй/унтарсан үед апп ажилласаар (хадгалалт алгасна, PDF татагдсаар).
 
-To learn more about Next.js, take a look at the following resources:
+## Ажиллуулах
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+uvicorn contract_app.app:app --host 0.0.0.0 --port 8000
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Дараа нь линк: `http://localhost:8000/contract/<student-id>` (ж: `/contract/6041ba91`).
 
-## Deploy on Vercel
+## Бүтэц
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+contract_app/
+  app.py            # FastAPI — маршрутууд (/contract/{id}, /api/student, /api/preview, /api/generate)
+  fill.py           # PDF бөглөх логик (PyMuPDF) — build_values, program_pdf, fill_contract
+  students.py       # data/students.json уншина
+  templates/contract.html   # хуудасны бүрхүүл (Tailwind + signature_pad CDN)
+  static/app.js     # 4 алхмын урсгал, validation, гарын үсэг (vanilla JS)
+public/templates/
+  contract.pdf      # placeholder-тай гэрээний загвар (#snake_case + <COVERAGE_PROGRAM>)
+  programs/<classCode>.pdf  # ангийн хичээлийн хөтөлбөр (бүлгийн prefix-ээр ч таарна)
+data/students.json  # суралцагчдын мэдээлэл
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Онцлог
+- Бөглөсөн талбарууд **тод (bold) + ТОМ үсгээр**.
+- Нэрс/хаягт **зөвхөн крилл** (латин үсэг автоматаар хасагдана).
+- Хөнгөлөлтийн хувь **(3,560,000 − tolokhDun)/3,560,000**-аар автоматаар бодогдоно.
+- Эцсийн төлөх огноо **2026-06-15 .. 2026-07-06** хооронд.
+- Гэрээний дугаар = суралцагчийн `num`.
+- Гарын үсэг ил тод дэвсгэртэйгээр зураасан дээр тавигдана.
+- Урт хаяг дараагийн текст рүү давахгүй (фонт автоматаар багтана).
