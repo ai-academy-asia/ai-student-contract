@@ -22,6 +22,11 @@ from .fill import build_values, program_pdf, fill_contract, discount_pct
 from . import db
 
 BASE = Path(__file__).resolve().parent
+# Гэрээний нийтийн линк (DB-д хадгалах): https://ai-academy.asia/contract/<id>
+CONTRACT_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://ai-academy.asia").rstrip("/")
+# Бүх замыг энэ угтвар дор байрлуулна → nginx зөвхөн нэг `location /contract/`-оор
+# проксолж, гол домэйн дээрх академийн сайттай (/, /api, /_next ...) мөргөлдөхгүй.
+PREFIX = "/contract"
 
 
 @asynccontextmanager
@@ -34,7 +39,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="AI Asia Contract", lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
+app.mount(f"{PREFIX}/_static", StaticFiles(directory=str(BASE / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 
 
@@ -57,7 +62,7 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/contract/{slug}", response_class=HTMLResponse)
+@app.get(PREFIX + "/{slug}", response_class=HTMLResponse)
 def contract_page(request: Request, slug: str):
     return templates.TemplateResponse("contract.html", {"request": request, "slug": slug})
 
@@ -70,7 +75,7 @@ def _already_signed(student_id: str) -> bool:
         return False
 
 
-@app.get("/api/student/{student_id}")
+@app.get(PREFIX + "/_api/student/{student_id}")
 def api_student(student_id: str):
     student = get_student_by_id(student_id)
     if not student:
@@ -97,7 +102,7 @@ def _build_pdf(body: dict, signature: str | None) -> bytes:
     )
 
 
-@app.post("/api/preview")
+@app.post(PREFIX + "/_api/preview")
 async def api_preview(request: Request):
     try:
         body = await request.json()
@@ -109,7 +114,7 @@ async def api_preview(request: Request):
         return JSONResponse({"error": "Урьдчилан харах алдаа"}, status_code=500)
 
 
-@app.post("/api/generate")
+@app.post(PREFIX + "/_api/generate")
 async def api_generate(request: Request):
     try:
         body = await request.json()
@@ -129,6 +134,7 @@ async def api_generate(request: Request):
                 class_code=body.get("classCode", ""), program=body.get("program", ""),
                 form=body.get("formData") or {}, finance=finance,
                 discount=discount_pct(finance.get("tolokhDun")),
+                contract_link=f"{CONTRACT_BASE_URL}/contract/{student_id}",
                 pdf_bytes=pdf, signature_b64=body.get("signature"),
             )
             print(f"contract saved: id={rec['id']} pdf={rec['pdf_path']}")

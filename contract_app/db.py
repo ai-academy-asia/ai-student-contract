@@ -20,7 +20,7 @@ from pathlib import Path
 import psycopg
 
 DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://admin:admin123@localhost:5432/contract_db"
+    "DATABASE_URL", "postgresql://contract:T3nger*@localhost:5432/contract_db"
 )
 
 ROOT = Path(__file__).resolve().parent.parent

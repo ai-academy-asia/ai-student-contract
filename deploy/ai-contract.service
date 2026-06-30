@@ -1,0 +1,18 @@
+[Unit]
+Description=AI Academy Asia — Сургалтын гэрээ (FastAPI)
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/backend/ai-asia-contract
+# Тохиргоог .env-ээс уншина (заавал биш — байхгүй бол кодын default ашиглана)
+EnvironmentFile=-/root/backend/ai-asia-contract/.env
+# Порт 8000 нь Node.js backend-д эзлэгдсэн тул гэрээний апп 8090 дээр ажиллана
+# (nginx /contract/ → 127.0.0.1:8090). Дотоод порт тул 127.0.0.1-д л сонсоно.
+ExecStart=/root/backend/ai-asia-contract/.venv/bin/uvicorn contract_app.app:app --host 127.0.0.1 --port 8090 --workers 2
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

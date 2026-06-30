@@ -1,6 +1,10 @@
 /* AI Academy Asia — сургалтын гэрээ. Нэг хуудаст урсгал (vanilla JS, light theme).
    Алхмууд: Мэдээлэл шалгах → Гэрээ харах → Гарын үсэг → Дуусгах. */
 
+// Бүх API/static нь `/contract` угтвар дор (nginx-ийн нэг location-д тааруулсан)
+const API = "/contract/_api";
+const STATIC = "/contract/_static";
+
 const STEPS = ["Мэдээлэл шалгах", "Гэрээ харах", "Гарын үсэг", "Дуусгах"];
 
 const FINAL_PAYMENT_MIN = "2026-06-15";
@@ -36,6 +40,10 @@ const PAYMENT_FIELDS = [
   { key: "finalPaymentDate", label: "Үлдэгдэл төлбөр төлөх сүүлийн хугацаа", type: "date", req: true, wide: true, min: FINAL_PAYMENT_MIN, max: FINAL_PAYMENT_MAX, hint: "6 сарын 15 – 7 сарын 6 хооронд" },
 ];
 
+const FIELDS_BY_KEY = Object.fromEntries(
+  [...STUDENT_FIELDS, ...GUARDIAN_FIELDS, ...ADDRESS_FIELDS, ...PAYMENT_FIELDS].map((f) => [f.key, f])
+);
+
 const RE_REGISTER = /^[Ѐ-ӿ]{2}\d{8}$/;
 const RE_PHONE = /^\d{8}$/;
 const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -53,7 +61,7 @@ const isDebt = (v) => v && v !== "-" && v !== "(0)" && !v.startsWith(" -");
 const normalizeRegister = (v) => (v.length <= 2 ? v.toUpperCase() : v.slice(0, 2).toUpperCase() + v.slice(2));
 
 // ── Эхлэл: суралцагчийн мэдээлэл татах ────────────────────────────────────────
-fetch(`/api/student/${window.SLUG}`)
+fetch(`${API}/student/${window.SLUG}`)
   .then((r) => r.json())
   .then((data) => {
     if (data.error) { state.notFound = true; render(); return; }
@@ -111,7 +119,7 @@ async function handleGenerate() {
   const s = state.student;
   state.loading = true; render();
   try {
-    const res = await fetch("/api/generate", {
+    const res = await fetch(`${API}/generate`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         studentId: s.id, classCode: s.classCode, program: s.program, num: s.num,
@@ -292,7 +300,7 @@ function render() {
   root.innerHTML = `
     <header class="mb-8">
       <div class="flex items-center gap-3 mb-8">
-        <img src="/static/logo.png" alt="AI Academy Asia" class="h-9 w-auto" />
+        <img src="${STATIC}/logo.png" alt="AI Academy Asia" class="h-9 w-auto" />
         <div class="leading-tight">
           <div class="text-slate-900 font-bold tracking-tight">AI Academy Asia</div>
           <div class="text-[11px] text-brand-700 font-medium">AI for all</div>
@@ -327,7 +335,18 @@ function wireStep() {
         else if (CYRILLIC_FIELDS.includes(key)) val = val.replace(/[A-Za-z]/g, "");
         if (val !== e.target.value) e.target.value = val;
         state.formData[key] = val;
-        if (state.errors[key]) { delete state.errors[key]; }
+        // утга оруулмагц улаан алдааг шууд цэвэрлэх (дахин render-гүйгээр)
+        if (state.errors[key]) {
+          delete state.errors[key];
+          inp.classList.remove("border-red-400");
+          inp.classList.add("border-slate-300");
+          const msg = inp.parentElement.querySelector("p");
+          const fd = FIELDS_BY_KEY[key];
+          if (msg) {
+            if (fd && fd.hint) { msg.className = "text-slate-400 text-xs mt-1"; msg.textContent = fd.hint; }
+            else msg.remove();
+          }
+        }
       });
     });
   }
@@ -345,7 +364,7 @@ function loadPreview() {
   const box = document.getElementById("agreeBox");
   let url = null;
 
-  fetch("/api/preview", {
+  fetch(`${API}/preview`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       classCode: s.classCode, program: s.program, num: s.num,
