@@ -19,6 +19,7 @@ from fastapi.templating import Jinja2Templates
 
 from .students import get_student_by_id
 from .fill import build_values, program_pdf, fill_contract, discount_pct
+from .certificate import fill_certificate, latin_full_name
 from . import db
 
 BASE = Path(__file__).resolve().parent
@@ -82,6 +83,31 @@ def api_student(student_id: str):
         return JSONResponse({"error": "Олдсонгүй"}, status_code=404)
     # аль хэдийн баталгаажсан гэрээтэй бол дахин хандуулахгүй
     return {**student, "alreadySigned": _already_signed(student_id)}
+
+
+@app.get(PREFIX + "/_api/certificate/{student_id}")
+def api_certificate(student_id: str):
+    """Хүүхдийн id-гаар нэр/овгийг тавьсан төгсөлтийн сертификатыг (PDF) буцаана."""
+    student = get_student_by_id(student_id)
+    if not student:
+        return JSONResponse({"error": "Олдсонгүй"}, status_code=404)
+    try:
+        pdf = fill_certificate(
+            class_code=student.get("classCode"),
+            first_name=student.get("firstName"),
+            last_name=student.get("lastName"),
+            today=_today(),
+        )
+    except FileNotFoundError:
+        return JSONResponse(
+            {"error": "Энэ хөтөлбөрт тохирох сертификатын загвар алга"}, status_code=404)
+    except Exception as exc:  # noqa: BLE001
+        print("Certificate error:", exc)
+        return JSONResponse({"error": "Сертификат үүсгэх алдаа"}, status_code=500)
+
+    fname = f"{latin_full_name(student.get('firstName'), student.get('lastName')) or student_id}.pdf"
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{fname}"'})
 
 
 def _build_pdf(body: dict, signature: str | None) -> bytes:
