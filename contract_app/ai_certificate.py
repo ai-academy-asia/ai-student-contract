@@ -29,7 +29,7 @@ import json
 import os
 import urllib.parse
 import urllib.request
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -266,7 +266,7 @@ def fill_ai_certificate(student: dict, base_url: str = "") -> bytes:
     # 2) #certificate_no — Open Sans 14, төвлөрсөн (baseline нь placeholder-ийн доод хэсэг).
     cx = (cert_no_rect.x0 + cert_no_rect.x1) / 2
     tw = body_font.text_length(student_id, fontsize=_CERT_NO_SIZE)
-    pg.insert_text((cx - tw / 2, cert_no_rect.y1 - 4.2), student_id,
+    pg.insert_text((cx - tw / 2, cert_no_rect.y1 - 0.5), student_id,
                    fontfile=body_font_path, fontname="osbody",
                    fontsize=_CERT_NO_SIZE, color=INK)
 
@@ -289,9 +289,9 @@ def fill_ai_certificate(student: dict, base_url: str = "") -> bytes:
                        fontfile=body_font_path, fontname="oscap",
                        fontsize=csize, color=INK)
 
-    # 5) #date — хэвлэж буй өдрөөс өмнөх өдөр (yesterday), төвлөрсөн, BoldItalic 17.
-    yday = date.today() - timedelta(days=1)
-    date_str = f"{yday.strftime('%B')} {yday.day}, {yday.year}"
+    # 5) #date — хэвлэж буй өнөөдрийн огноо, төвлөрсөн, BoldItalic 17.
+    today = date.today()
+    date_str = f"{today.strftime('%B')} {today.day}, {today.year}"
     dtw = date_font.text_length(date_str, fontsize=_DATE_SIZE)
     dcx = (date_rect.x0 + date_rect.x1) / 2
     pg.insert_text((dcx - dtw / 2, date_rect.y1 - 9.0), date_str,
