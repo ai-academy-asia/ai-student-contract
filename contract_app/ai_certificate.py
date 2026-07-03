@@ -150,6 +150,29 @@ def _find_rect(pg, token: str, fallback: "fitz.Rect | None"):
     return hits[0] if hits else fallback
 
 
+def _find_capstone(pg):
+    """'Capstone project: #capstone_topic' мөрийг олно (letter-spacing-тэй тул
+    search_for олохгүй). Мөрийн rect ба '#'-ийн эхлэх x-ийг буцаана; олдвол
+    (rect, hash_x0), эс бол (None, None)."""
+    try:
+        d = pg.get_text("rawdict")
+    except Exception:  # noqa: BLE001
+        return None, None
+    for b in d.get("blocks", []):
+        for ln in b.get("lines", []):
+            chars = [ch for sp in ln.get("spans", []) for ch in sp.get("chars", [])]
+            # letter-spacing нь жинхэнэ зайн тэмдэгтээр хийгдсэн тул зайг хасаж шалгана.
+            compact = "".join(ch.get("c", "") for ch in chars).replace(" ", "")
+            if "apstone" in compact and "#" in compact:
+                x0 = min(ch["bbox"][0] for ch in chars)
+                y0 = min(ch["bbox"][1] for ch in chars)
+                x1 = max(ch["bbox"][2] for ch in chars)
+                y1 = max(ch["bbox"][3] for ch in chars)
+                hashx = next((ch["bbox"][0] for ch in chars if ch.get("c") == "#"), None)
+                return fitz.Rect(x0, y0, x1, y1), hashx
+    return None, None
+
+
 # --- Мэдээлэл -----------------------------------------------------------------
 def _load_students() -> list[dict]:
     try:
@@ -235,6 +258,10 @@ def fill_ai_certificate(student: dict, base_url: str = "") -> bytes:
     else:
         name_rect = fn_rect or ln_rect or _NAME_RECT
     date_rect = _find_rect(pg, "#date", _DATE_RECT)
+    cap_line, cap_hashx = _find_capstone(pg)
+    if cap_line is None:
+        cap_line, cap_hashx = _CAPSTONE_LINE, _CAPSTONE_VALUE_X0
+    cap_value_x0 = cap_hashx if cap_hashx is not None else _CAPSTONE_VALUE_X0
     # Нэрийн redaction нь "is hereby awarded to" мөртэй огтолж түүнийг устгахаас
     # сэргийлж, redaction-ийн дээд хязгаарыг тэр мөрийн доор шахна.
     awarded = _find_rect(pg, "is hereby awarded to", None)
@@ -249,8 +276,8 @@ def fill_ai_certificate(student: dict, base_url: str = "") -> bytes:
     pg.add_redact_annot(fitz.Rect(name_rect.x0, name_top, name_rect.x1, name_rect.y1),
                         fill=False)
     pg.add_redact_annot(
-        fitz.Rect(_CAPSTONE_VALUE_X0 - 1.5, _CAPSTONE_LINE.y0 - 1,
-                  _CAPSTONE_LINE.x1 + 2, _CAPSTONE_LINE.y1 + 1),
+        fitz.Rect(cap_value_x0 - 1.5, cap_line.y0 - 1,
+                  cap_line.x1 + 2, cap_line.y1 + 1),
         fill=False,
     )
     pg.add_redact_annot(date_rect, fill=False)
@@ -283,9 +310,9 @@ def fill_ai_certificate(student: dict, base_url: str = "") -> bytes:
     if capstone:
         # Утга нь placeholder-ийн богино мөрөөр биш, баруун захад (x≈788) хүртэл
         # сунаж болно; урт бол л багасгана (10pt-ээс доошгүй).
-        max_w = _CAPSTONE_VALUE_X1 - _CAPSTONE_VALUE_X0
+        max_w = _CAPSTONE_VALUE_X1 - cap_value_x0
         csize = _fit_size(body_font, capstone, max_w, _CAPSTONE_SIZE, floor=10.0)
-        pg.insert_text((_CAPSTONE_VALUE_X0, _CAPSTONE_LINE.y1 - 3.2), capstone,
+        pg.insert_text((cap_value_x0, cap_line.y1 - 3.2), capstone,
                        fontfile=body_font_path, fontname="oscap",
                        fontsize=csize, color=INK)
 
