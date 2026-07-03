@@ -81,13 +81,13 @@ def verify_cert_token(token: str) -> dict | None:
         return None
 
 # --- Фонтууд ------------------------------------------------------------------
-# Нэр — Crimson Pro (serif, загварын "CERTIFICATE" гарчигтай ижил гэр бүл).
-# contract_app/fonts/CrimsonPro-Regular.ttf (эсвэл CERT_NAME_FONT env-ээр).
-# Байхгүй бол Liana script, эцэст нь системийн serif руу fallback хийнэ.
+# Нэр — Liana (script, загварын эх #firstname/#lastname-тэй ижил).
+# contract_app/fonts/Liana.ttf (эсвэл CERT_NAME_FONT env-ээр).
+# Байхгүй бол Crimson Pro serif, эцэст нь системийн serif руу fallback хийнэ.
 NAME_FONT_CANDIDATES = [
     os.environ.get("CERT_NAME_FONT", ""),
-    str(FONT_DIR / "CrimsonPro-Regular.ttf"),
     str(FONT_DIR / "Liana.ttf"),
+    str(FONT_DIR / "CrimsonPro-Regular.ttf"),
     "/System/Library/Fonts/Supplemental/Georgia.ttf",                 # macOS fallback
     "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",               # Linux fallback
     "/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
@@ -242,7 +242,7 @@ def fill_ai_certificate(student: dict, base_url: str = "") -> bytes:
                    fontfile=body_font_path, fontname="osbody",
                    fontsize=_CERT_NO_SIZE, color=INK)
 
-    # 3) Нэр овог — Crimson Pro 46, төвлөрсөн; доорх зураас (y≈267)-аас жоохон дээш.
+    # 3) Нэр овог — Liana 46, төвлөрсөн; доорх зураас (y≈267)-аас жоохон дээш.
     full_name = (first_name + " " + last_name).strip()
     nsize = _fit_size(name_font, full_name, _NAME_MAXW, _NAME_SIZE, floor=20.0)
     ntw = name_font.text_length(full_name, fontsize=nsize)
