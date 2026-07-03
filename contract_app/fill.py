@@ -74,21 +74,39 @@ def _contract_no_fallback(seed: str) -> str:
     return (digits[-4:] or "0001").rjust(4, "0")
 
 
+def _age_code(class_code: str | None) -> str | None:
+    """classCode-ийн сүүлийн орнуудаас насны кодыг гаргана.
+    `…1417` → '1417' (14-18), `…0912`/`…912` → '0912' (10-14). Танихгүй бол None."""
+    digits = re.sub(r"\D", "", class_code or "")
+    if not digits:
+        return None
+    tail = digits[-4:]
+    if tail == "1417":
+        return "1417"
+    if tail.endswith("912"):          # 0912 эсвэл 912 (тэргүүн 0 гээгдсэн)
+        return "0912"
+    return None
+
+
 def program_pdf(class_code: str | None) -> str:
     """
     classCode-д тохирох хөтөлбөрийн PDF зам.
-    1) яг `<classCode>.pdf`, 2) байхгүй бол насны бүлгийн (`^Summer\\d{2}`) файл.
+    1) яг `<classCode>.pdf`,
+    2) байхгүй бол **насны ангиллаар** (classCode-ийн сүүлийн орнууд): `…1417` → 14-18,
+       `…0912`/`…912` → 10-14. Хөтөлбөрийн файлын нэрэнд мөн энэ насны код бий
+       (`Summer13247**1417**.pdf`=14-18, `Summer18246**0912**.pdf`=10-14) тул тэрхүү
+       код-оор тааруулна. ⚠️ Хуучин код зөвхөн `Summer13`/`Summer18` угтвараар л
+       бүлэглэдэг байсан тул нэг угтвар доторх бага/том ангиудыг андуурдаг байв.
     """
     if not class_code:
         return ""
     exact = PROGRAMS_DIR / f"{class_code}.pdf"
     if exact.exists():
         return str(exact)
-    m = re.match(r"^Summer\d{2}", class_code)
-    if m and PROGRAMS_DIR.exists():
-        group = m.group(0)
+    age = _age_code(class_code)
+    if age and PROGRAMS_DIR.exists():
         for f in sorted(os.listdir(PROGRAMS_DIR)):
-            if f.endswith(".pdf") and f.startswith(group):
+            if f.endswith(".pdf") and f[:-4].endswith(age):
                 return str(PROGRAMS_DIR / f)
     return ""
 

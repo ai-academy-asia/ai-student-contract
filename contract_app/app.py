@@ -20,7 +20,9 @@ from fastapi.templating import Jinja2Templates
 from .students import get_student_by_id
 from .fill import build_values, program_pdf, fill_contract, discount_pct
 from .certificate import fill_certificate, latin_full_name
+from .ai_certificate import fill_ai_certificate, get_engineer_by_id
 from . import db
+from . import signed_store
 
 BASE = Path(__file__).resolve().parent
 # Гэрээний нийтийн линк (DB-д хадгалах): https://ai-academy.asia/contract/<id>
@@ -69,9 +71,13 @@ def contract_page(request: Request, slug: str):
 
 
 def _already_signed(student_id: str) -> bool:
+    # 1) Файл дээрх түгжээ — DB-гүй ч найдвартай ажиллана.
+    if signed_store.is_signed(student_id):
+        return True
+    # 2) DB (боломжтой бол) — production-д persistence-ийн эх сурвалж.
     try:
         return db.has_signed_contract(student_id)
-    except Exception as exc:  # noqa: BLE001 — DB down → блоклохгүй
+    except Exception as exc:  # noqa: BLE001 — DB down → файлын түгжээ л шийднэ
         print("has_signed_contract check failed:", exc)
         return False
 
@@ -108,6 +114,28 @@ def api_certificate(student_id: str):
     fname = f"{latin_full_name(student.get('firstName'), student.get('lastName')) or student_id}.pdf"
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="{fname}"'})
+
+
+@app.get(PREFIX + "/_api/ai-certificate/{student_id}")
+def api_ai_certificate(student_id: str):
+    """AI Engineer сертификат: `data/ai_engineer.json`-оос student_id-гаар олж
+    AIEngineer.pdf-ийг бөглөөд PDF-ийг татаж өгнө. QR-ийг уншихад энэ эндпойнт
+    дуудагдаж PDF шууд татагдана."""
+    student = get_engineer_by_id(student_id)
+    if not student:
+        return JSONResponse({"error": "Олдсонгүй"}, status_code=404)
+    try:
+        pdf = fill_ai_certificate(student, base_url=CONTRACT_BASE_URL)
+    except FileNotFoundError as exc:
+        print("AI certificate template error:", exc)
+        return JSONResponse({"error": "Сертификатын загвар алга"}, status_code=404)
+    except Exception as exc:  # noqa: BLE001
+        print("AI certificate error:", exc)
+        return JSONResponse({"error": "Сертификат үүсгэх алдаа"}, status_code=500)
+
+    name = f"{student.get('first_name','')} {student.get('last_name','')}".strip() or student_id
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.pdf"'})
 
 
 def _build_pdf(body: dict, signature: str | None) -> bytes:
@@ -166,6 +194,13 @@ async def api_generate(request: Request):
             print(f"contract saved: id={rec['id']} pdf={rec['pdf_path']}")
         except Exception as exc:  # noqa: BLE001 — хадгалалт амжилтгүй ч PDF-ийг буцаана
             print("DB save failed:", exc)
+
+        # Файл дээрх нэг удаагийн түгжээг тэмдэглэх (DB-гүй ч дахин хийхийг блоклоно).
+        try:
+            signed_store.mark_signed(student_id, num=body.get("num", ""),
+                                     class_code=body.get("classCode", ""))
+        except Exception as exc:  # noqa: BLE001
+            print("signed marker write failed:", exc)
 
         return Response(content=pdf, media_type="application/pdf",
                         headers={"Content-Disposition": f'attachment; filename="contract-{student_id}.pdf"'})

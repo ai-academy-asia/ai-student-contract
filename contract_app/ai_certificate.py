@@ -1,0 +1,235 @@
+"""
+AI Engineer сертификат (AIEngineer.pdf) бөглөх.
+
+`public/templates/certificates/AIEngineer.pdf` загвар нь жинхэнэ embedded фонттой
+(OpenSans, Liana) тул placeholder текстийг **redaction**-оор цэвэрхэн устгаад, дээр нь
+шинэ утгыг тохирох фонт/хэмжээгээр бичнэ. Мэдээллийг `data/ai_engineer.json`-оос
+`student_id`-гаар олж авна.
+
+Placeholder-ууд:
+    #certificate_no  → student_id            (Open Sans, 14pt, төвлөрсөн)
+    #firstname       → first_name            (Liana, 40pt)
+    #lastname        → last_name             (Liana, 40pt)
+    #capstone_topic  → project_name_en       (Open Sans, 12pt)
+    QR (зүүн доод badge) → сертификат татах API-ийн URL-ийг кодлосон QR
+
+QR-ийг id-гаар нь дуудагдах татах эндпойнт руу чиглүүлнэ: түүнийг уншихад
+`{base_url}/contract/_api/ai-certificate/{student_id}` руу орж PDF татагдана.
+"""
+from __future__ import annotations
+
+import io
+import json
+import os
+import urllib.parse
+import urllib.request
+from datetime import date, timedelta
+from pathlib import Path
+
+import fitz  # PyMuPDF
+
+ROOT = Path(__file__).resolve().parent.parent
+DATA_FILE = ROOT / "data" / "ai_engineer.json"
+TEMPLATE = ROOT / "public" / "templates" / "certificates" / "AIEngineer.pdf"
+FONT_DIR = Path(__file__).resolve().parent / "fonts"
+
+# Нэмж бичих бүх текстийн өнгө — #3d3939 (dark grey).
+INK = (0x3d / 255, 0x39 / 255, 0x39 / 255)
+
+# --- Фонтууд ------------------------------------------------------------------
+# Нэр — Crimson Pro (serif, загварын "CERTIFICATE" гарчигтай ижил гэр бүл).
+# contract_app/fonts/CrimsonPro-Regular.ttf (эсвэл CERT_NAME_FONT env-ээр).
+# Байхгүй бол Liana script, эцэст нь системийн serif руу fallback хийнэ.
+NAME_FONT_CANDIDATES = [
+    os.environ.get("CERT_NAME_FONT", ""),
+    str(FONT_DIR / "CrimsonPro-Regular.ttf"),
+    str(FONT_DIR / "Liana.ttf"),
+    "/System/Library/Fonts/Supplemental/Georgia.ttf",                 # macOS fallback
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",               # Linux fallback
+    "/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
+]
+# Бусад бичвэр — Open Sans.
+BODY_FONT_CANDIDATES = [
+    os.environ.get("CERT_BODY_FONT", ""),
+    str(FONT_DIR / "OpenSans-Regular.ttf"),
+    "/usr/share/fonts/truetype/open-sans/OpenSans-Regular.ttf",       # Linux
+    "/System/Library/Fonts/Supplemental/Arial.ttf",                   # macOS fallback
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+]
+# Огноо — загварын #date нь OpenSans Bold Italic; байхгүй бол энгийн body руу.
+DATE_FONT_CANDIDATES = [
+    os.environ.get("CERT_DATE_FONT", ""),
+    str(FONT_DIR / "OpenSans-BoldItalic.ttf"),
+    "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf",       # macOS fallback
+    "/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf",
+]
+
+# --- Placeholder байрлал (AIEngineer.pdf, 842×595) ---------------------------
+# search_for-оор баталгаажуулсан.
+_CERT_NO_RECT = fitz.Rect(375.87, 39.66, 472.48, 58.73)     # #certificate_no
+_NAME_RECT = fitz.Rect(266.03, 203.66, 576.15, 271.59)      # #firstname #lastname
+# "Capstone project: #capstone_topic" мөр letter-spacing-тэй тул search_for олохгүй.
+# '#' үг x0≈210.4-с эхэлдэг; өмнөх "Capstone project:"-ийг хэвээр үлдээж, түүнээс
+# хойшхийг л устгана.
+_CAPSTONE_LINE = fitz.Rect(65.5, 361.7, 335.9, 378.1)
+_CAPSTONE_VALUE_X0 = 210.4                                  # '#' -ийн эхлэл
+_CAPSTONE_VALUE_X1 = 788.0                                  # утга сунах баруун хязгаар
+# #date — доод голд ганцаараа (BoldItalic 17). Yesterday-г төвлүүлж бичнэ.
+_DATE_RECT = fitz.Rect(397.28, 566.02, 444.90, 589.17)
+# Нэрийн доорх зураас y≈267.4; нэрийг түүнээс жоохон дээш тавина.
+_NAME_UNDERLINE_Y = 267.4
+_NAME_CENTER_X = 421.09                                      # (266+576)/2
+_NAME_MAXW = 520.0                                          # зурааны өргөнд багтаана
+# Загвар дээрх жишээ QR (доод зүүн badge доторх) — үүн дээр шинэ QR-ийг давхарлана.
+_QR_RECT = fitz.Rect(86.3, 431.6, 164.9, 510.0)
+
+_CERT_NO_SIZE = 14.0
+_NAME_SIZE = 46.0
+_CAPSTONE_SIZE = 15.0
+_DATE_SIZE = 17.0
+
+
+def _pick_font(candidates: list[str]) -> str | None:
+    for p in candidates:
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
+# --- Мэдээлэл -----------------------------------------------------------------
+def _load_students() -> list[dict]:
+    try:
+        return (json.loads(DATA_FILE.read_text(encoding="utf-8")) or {}).get("students", [])
+    except Exception as exc:  # noqa: BLE001
+        print("ai_engineer.json read failed:", exc)
+        return []
+
+
+def get_engineer_by_id(student_id: str) -> dict | None:
+    """`data/ai_engineer.json`-оос student_id-гаар суралцагчийг олж буцаана."""
+    sid = str(student_id).strip()
+    return next((s for s in _load_students() if str(s.get("student_id")) == sid), None)
+
+
+# --- QR -----------------------------------------------------------------------
+def _qr_png(data: str) -> bytes | None:
+    """URL-ийг кодолсон QR-ийн PNG bytes — модулиуд нь **бөөрөнхий** булантай.
+    qrcode суулгасан бол локалаар (StyledPilImage + RoundedModuleDrawer), эс бол
+    qrserver.com-оор (интернет шаардлагатай). Алдвал None."""
+    try:
+        import qrcode  # type: ignore
+        from qrcode.image.styledpil import StyledPilImage
+        from qrcode.image.styles.moduledrawers.pil import RoundedModuleDrawer
+
+        qr = qrcode.QRCode(border=1, box_size=16,
+                           error_correction=qrcode.constants.ERROR_CORRECT_M)
+        qr.add_data(data)
+        qr.make(fit=True)
+        img = qr.make_image(image_factory=StyledPilImage,
+                            module_drawer=RoundedModuleDrawer())
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except ImportError:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        print("local rounded QR failed:", exc)
+    try:
+        # qrserver: бөөрөнхий модуль дэмждэггүй тул fallback (хурц) хувилбар.
+        url = ("https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=2&data="
+               + urllib.parse.quote(data, safe=""))
+        with urllib.request.urlopen(url, timeout=8) as resp:
+            return resp.read()
+    except Exception as exc:  # noqa: BLE001
+        print("qrserver QR failed:", exc)
+        return None
+
+
+# --- Бөглөх -------------------------------------------------------------------
+def _fit_size(font: fitz.Font, text: str, max_w: float, start: float, floor: float = 6.0) -> float:
+    size = start
+    while size > floor and font.text_length(text, fontsize=size) > max_w:
+        size -= 0.5
+    return size
+
+
+def fill_ai_certificate(student: dict, base_url: str = "") -> bytes:
+    """Суралцагчийн мэдээллээр AIEngineer.pdf-ийг бөглөж PDF (bytes) буцаана."""
+    if not TEMPLATE.exists():
+        raise FileNotFoundError(f"Template not found: {TEMPLATE}")
+
+    name_font_path = _pick_font(NAME_FONT_CANDIDATES)
+    body_font_path = _pick_font(BODY_FONT_CANDIDATES)
+    if not name_font_path or not body_font_path:
+        raise RuntimeError("Certificate fonts not found; set CERT_NAME_FONT / CERT_BODY_FONT")
+
+    student_id = str(student.get("student_id") or "").strip()
+    first_name = (student.get("first_name") or "").strip()
+    last_name = (student.get("last_name") or "").strip()
+    capstone = (student.get("project_name_en") or "").strip()
+
+    doc = fitz.open(str(TEMPLATE))
+    pg = doc[0]
+
+    # 1) Placeholder текстийг устгах (redaction). fill=False → доорх цаас (сул
+    #    градиент/текстур) хэвээр харагдана; цагаанаар дүүргэвэл бүдэг тэгш өнцөгт
+    #    үлдэнэ.
+    pg.add_redact_annot(_CERT_NO_RECT, fill=False)
+    pg.add_redact_annot(_NAME_RECT, fill=False)
+    pg.add_redact_annot(
+        fitz.Rect(_CAPSTONE_VALUE_X0 - 1.5, _CAPSTONE_LINE.y0 - 1,
+                  _CAPSTONE_LINE.x1 + 2, _CAPSTONE_LINE.y1 + 1),
+        fill=False,
+    )
+    pg.add_redact_annot(_DATE_RECT, fill=False)
+    # Жишээ QR-ийг арилгах (доор нь шинэ QR тавина).
+    pg.add_redact_annot(_QR_RECT, fill=False)
+    pg.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+
+    body_font = fitz.Font(fontfile=body_font_path)
+    name_font = fitz.Font(fontfile=name_font_path)
+    date_font_path = _pick_font(DATE_FONT_CANDIDATES) or body_font_path
+    date_font = fitz.Font(fontfile=date_font_path)
+
+    # 2) #certificate_no — Open Sans 14, төвлөрсөн (baseline нь placeholder-ийн доод хэсэг).
+    cx = (_CERT_NO_RECT.x0 + _CERT_NO_RECT.x1) / 2
+    tw = body_font.text_length(student_id, fontsize=_CERT_NO_SIZE)
+    pg.insert_text((cx - tw / 2, _CERT_NO_RECT.y1 - 4.2), student_id,
+                   fontfile=body_font_path, fontname="osbody",
+                   fontsize=_CERT_NO_SIZE, color=INK)
+
+    # 3) Нэр овог — Crimson Pro 46, төвлөрсөн; доорх зураас (y≈267)-аас жоохон дээш.
+    full_name = (first_name + " " + last_name).strip()
+    nsize = _fit_size(name_font, full_name, _NAME_MAXW, _NAME_SIZE, floor=20.0)
+    ntw = name_font.text_length(full_name, fontsize=nsize)
+    pg.insert_text((_NAME_CENTER_X - ntw / 2, _NAME_UNDERLINE_Y - 6.4), full_name,
+                   fontfile=name_font_path, fontname="cname",
+                   fontsize=nsize, color=INK)
+
+    # 4) #capstone_topic — Open Sans 12, "Capstone project: "-ийн ард.
+    if capstone:
+        # Утга нь placeholder-ийн богино мөрөөр биш, баруун захад (x≈788) хүртэл
+        # сунаж болно; урт бол л багасгана (10pt-ээс доошгүй).
+        max_w = _CAPSTONE_VALUE_X1 - _CAPSTONE_VALUE_X0
+        csize = _fit_size(body_font, capstone, max_w, _CAPSTONE_SIZE, floor=10.0)
+        pg.insert_text((_CAPSTONE_VALUE_X0, _CAPSTONE_LINE.y1 - 3.2), capstone,
+                       fontfile=body_font_path, fontname="oscap",
+                       fontsize=csize, color=INK)
+
+    # 5) #date — хэвлэж буй өдрөөс өмнөх өдөр (yesterday), төвлөрсөн, BoldItalic 17.
+    yday = date.today() - timedelta(days=1)
+    date_str = f"{yday.strftime('%B')} {yday.day}, {yday.year}"
+    dtw = date_font.text_length(date_str, fontsize=_DATE_SIZE)
+    dcx = (_DATE_RECT.x0 + _DATE_RECT.x1) / 2
+    pg.insert_text((dcx - dtw / 2, _DATE_RECT.y1 - 5.5), date_str,
+                   fontfile=date_font_path, fontname="osdate",
+                   fontsize=_DATE_SIZE, color=INK)
+
+    # 6) QR — id-гаар татах API руу чиглүүлсэн.
+    dl_url = f"{base_url.rstrip('/')}/contract/_api/ai-certificate/{student_id}" if base_url \
+        else f"/contract/_api/ai-certificate/{student_id}"
+    png = _qr_png(dl_url)
+    if png:
+        pg.insert_image(_QR_RECT, stream=png, keep_proportion=True)
+
+    return doc.write(deflate=True, garbage=3)
