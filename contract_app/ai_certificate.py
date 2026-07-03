@@ -11,13 +11,19 @@ Placeholder-ууд:
     #firstname       → first_name            (Liana, 40pt)
     #lastname        → last_name             (Liana, 40pt)
     #capstone_topic  → project_name_en       (Open Sans, 12pt)
-    QR (зүүн доод badge) → сертификат татах API-ийн URL-ийг кодлосон QR
+    QR (зүүн доод badge) → HMAC-hash-аар баталгаажсан, өөртөө сертификатын мэдээлэл
+                          агуулсан (base64) токен → лавлагааны хуудас руу.
 
-QR-ийг id-гаар нь дуудагдах татах эндпойнт руу чиглүүлнэ: түүнийг уншихад
-`{base_url}/contract/_api/ai-certificate/{student_id}` руу орж PDF татагдана.
+QR нь id-аар API дуудахгүй. Оронд нь сертификатын талбаруудыг JSON→base64url болгож,
+`CERT_SIGNING_SECRET`-ээр HMAC-SHA256 hash хийж `<payload>.<sig>` токен үүсгэнэ. QR-д
+`{base_url}/contract/cert/verify?t=<token>` URL-ийг кодолно. Уншихад лавлагааны хуудас
+токеныг **DB-гүйгээр** задалж, hash-ыг дахин тооцож шалгаад мэдээллийг шууд харуулна.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import io
 import json
 import os
@@ -35,6 +41,44 @@ FONT_DIR = Path(__file__).resolve().parent / "fonts"
 
 # Нэмж бичих бүх текстийн өнгө — #3d3939 (dark grey).
 INK = (0x3d / 255, 0x39 / 255, 0x39 / 255)
+
+# --- QR токен: өөртөө агуулсан, HMAC-аар баталгаажсан ------------------------
+# Секретийг production-д заавал env-ээр өгнө (default-ыг сольж болохгүй).
+CERT_SECRET = os.environ.get("CERT_SIGNING_SECRET",
+                             "ai-academy-asia-cert-2026-CHANGE-ME")
+
+
+def _b64u(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _b64u_decode(s: str) -> bytes:
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def _sign(body: str) -> str:
+    return _b64u(hmac.new(CERT_SECRET.encode("utf-8"), body.encode("ascii"),
+                          hashlib.sha256).digest())
+
+
+def make_cert_token(payload: dict) -> str:
+    """payload(JSON)-ыг base64url болгож, HMAC-SHA256 hash хавсаргаж `body.sig` токен."""
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    body = _b64u(raw)
+    return f"{body}.{_sign(body)}"
+
+
+def verify_cert_token(token: str) -> dict | None:
+    """Токеныг DB-гүйгээр шалгах: hash таарвал payload dict, эс бол None."""
+    if not token or "." not in token:
+        return None
+    body, _, sig = token.partition(".")
+    if not hmac.compare_digest(sig, _sign(body)):   # tamper / буруу секрет
+        return None
+    try:
+        return json.loads(_b64u_decode(body).decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
 
 # --- Фонтууд ------------------------------------------------------------------
 # Нэр — Crimson Pro (serif, загварын "CERTIFICATE" гарчигтай ижил гэр бүл).
@@ -225,10 +269,15 @@ def fill_ai_certificate(student: dict, base_url: str = "") -> bytes:
                    fontfile=date_font_path, fontname="osdate",
                    fontsize=_DATE_SIZE, color=INK)
 
-    # 6) QR — id-гаар татах API руу чиглүүлсэн.
-    dl_url = f"{base_url.rstrip('/')}/contract/_api/ai-certificate/{student_id}" if base_url \
-        else f"/contract/_api/ai-certificate/{student_id}"
-    png = _qr_png(dl_url)
+    # 6) QR — id-аар API дуудахгүй; сертификатын мэдээллийг өөрт нь агуулсан,
+    #    HMAC-аар баталгаажсан токеныг лавлагааны хуудас руу кодолно.
+    token = make_cert_token({
+        "no": student_id, "fn": first_name, "ln": last_name,
+        "cap": capstone, "dt": date_str,
+    })
+    root = base_url.rstrip("/") if base_url else ""
+    verify_url = f"{root}/contract/cert/verify?t={urllib.parse.quote(token, safe='')}"
+    png = _qr_png(verify_url)
     if png:
         pg.insert_image(_QR_RECT, stream=png, keep_proportion=True)
 

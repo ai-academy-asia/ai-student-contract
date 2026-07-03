@@ -7,6 +7,7 @@ AI Asia сургалтын гэрээ — FastAPI (Next.js-ийг орлуулс
 """
 from __future__ import annotations
 
+import html
 import os
 from contextlib import asynccontextmanager
 from datetime import date
@@ -20,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 from .students import get_student_by_id
 from .fill import build_values, program_pdf, fill_contract, discount_pct
 from .certificate import fill_certificate, latin_full_name
-from .ai_certificate import fill_ai_certificate, get_engineer_by_id
+from .ai_certificate import fill_ai_certificate, get_engineer_by_id, verify_cert_token
 from . import db
 from . import signed_store
 
@@ -136,6 +137,177 @@ def api_ai_certificate(student_id: str):
     name = f"{student.get('first_name','')} {student.get('last_name','')}".strip() or student_id
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{name}.pdf"'})
+
+
+# --- Сертификат баталгаажуулах хуудас (QR unshuulah destination) --------------
+# ai-academy.asia сайтын header/footer-ийг апп-ийн өөрийн static (лого) дээр
+# тулгуурлан дуурайлгаж, бүх холбоосыг гол домэйн руу чиглүүлнэ.
+_SITE = "https://ai-academy.asia"
+_LOGO = PREFIX + "/_static/logo.png"
+
+# Footer баганууд (ai-academy.asia footer-ийн бүтэц/холбоосоор).
+_FOOTER_COLS = [
+    ("Бүтээгдэхүүн", [
+        ("Хүүхдэд", f"{_SITE}/mn/summer-cohort"),
+        ("Насанд хүрэгчид", f"{_SITE}/mn/summer-cohort"),
+        ("Байгууллагуудад", f"{_SITE}/mn/summer-cohort"),
+    ]),
+    ("Байгууллага", [
+        ("Бидний тухай", f"{_SITE}/mn/about"),
+        ("Багш нар", f"{_SITE}/"),
+        ("Хамтрагчид", f"{_SITE}/"),
+    ]),
+    ("Нөөц", [
+        ("Блог", f"{_SITE}/mn/blog/45"),
+    ]),
+    ("Хууль эрх зүй", [
+        ("Нууцлалын бодлого", f"{_SITE}/mn/privacy-policy"),
+        ("Үйлчилгээний нөхцөл", f"{_SITE}/mn/terms"),
+    ]),
+]
+
+
+def _site_header() -> str:
+    return (
+        "<header class='site-header'><div class='wrap'>"
+        f"<a class='logo' href='{_SITE}/'>"
+        f"<img src='{_LOGO}' alt='AI Academy Asia'>"
+        "<span>AI Academy Asia</span></a>"
+        f"<a class='nav-cta' href='{_SITE}/'>Нүүр хуудас</a>"
+        "</div></header>"
+    )
+
+
+def _site_footer() -> str:
+    cols = ""
+    for title, links in _FOOTER_COLS:
+        items = "".join(f"<li><a href='{href}'>{html.escape(label)}</a></li>"
+                        for label, href in links)
+        cols += f"<div class='fcol'><h4>{html.escape(title)}</h4><ul>{items}</ul></div>"
+    return (
+        "<footer class='site-footer'><div class='wrap ftop'>"
+        "<div class='fbrand'>"
+        f"<a class='logo' href='{_SITE}/'><img src='{_LOGO}' alt='AI Academy Asia'>"
+        "<span>AI Academy Asia</span></a>"
+        "<p>Хиймэл оюун ухааны боловсрол хүн бүрт</p></div>"
+        f"<div class='fcols'>{cols}</div>"
+        "</div><div class='wrap fbottom'>"
+        "<span>© AI-Academy 2026. Бүх эрх хуулиар хамгаалагдсан.</span>"
+        "</div></footer>"
+    )
+
+
+def _page_shell(title: str, inner: str) -> str:
+    return (
+        "<!doctype html><html lang='mn'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        f"<link rel='icon' href='{_LOGO}'>"
+        f"<title>{html.escape(title)}</title>" + _VERIFY_CSS +
+        "</head><body>" + _site_header() +
+        f"<main class='page'>{inner}</main>" + _site_footer() +
+        "</body></html>"
+    )
+
+
+def _verify_page(data: dict | None) -> str:
+    """Токен шалгасны дараах HTML лавлагааны хуудас. data=None → хүчингүй."""
+    E = html.escape
+    if not data:
+        inner = (
+            "<section class='card invalid'>"
+            "<div class='badge'>✕</div>"
+            "<h1>Хүчингүй сертификат</h1>"
+            "<p class='muted'>Энэ QR-ийн токен буруу, дутуу эсвэл өөрчлөгдсөн байна. "
+            "Уг сертификат AI Academy Asia-аас олгогдоогүй байж болзошгүй.</p>"
+            "</section>"
+        )
+        return _page_shell("Сертификат — Хүчингүй", inner)
+
+    full_name = f"{data.get('fn','')} {data.get('ln','')}".strip()
+    rows = [
+        ("Нэр", full_name),
+        ("Сертификатын дугаар", data.get("no", "")),
+        ("Capstone төсөл", data.get("cap", "")),
+        ("Олгосон огноо", data.get("dt", "")),
+    ]
+    rows_html = "".join(
+        f"<div class='row'><span class='k'>{E(k)}</span>"
+        f"<span class='v'>{E(str(v))}</span></div>"
+        for k, v in rows if str(v).strip()
+    )
+    inner = (
+        "<section class='card valid'>"
+        "<div class='badge'>✓</div>"
+        "<h1>Баталгаажсан сертификат</h1>"
+        "<p class='muted'>Энэ сертификатыг AI Academy Asia олгосон нь баталгаажлаа.</p>"
+        f"<div class='details'>{rows_html}</div>"
+        "<p class='brand'>AI Academy Asia · AI Engineer</p>"
+        "</section>"
+    )
+    return _page_shell(f"Баталгаажсан — {full_name}", inner)
+
+
+_VERIFY_CSS = (
+    "<style>"
+    ":root{color-scheme:light dark;--bg:#f4f5f7;--fg:#1f2328;--card:#fff;"
+    "--muted:#6b7280;--line:#eceef1;--brand:#2563eb;--head:#0b1220}"
+    "@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;"
+    "--card:#161b22;--muted:#9aa4b2;--line:#30363d;--brand:#5b8cff;--head:#0b1220}}"
+    "*{box-sizing:border-box}"
+    "body{margin:0;min-height:100vh;display:flex;flex-direction:column;"
+    "font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
+    "background:var(--bg);color:var(--fg)}"
+    "a{text-decoration:none;color:inherit}"
+    ".wrap{max-width:1080px;margin:0 auto;padding:0 24px;width:100%}"
+    # header
+    ".site-header{background:var(--head);color:#fff;position:sticky;top:0;z-index:5}"
+    ".site-header .wrap{display:flex;align-items:center;justify-content:space-between;"
+    "height:64px}"
+    ".logo{display:flex;align-items:center;gap:10px;font-weight:700;color:#fff}"
+    ".logo img{height:32px;width:auto;display:block}"
+    ".nav-cta{background:var(--brand);color:#fff;padding:9px 16px;border-radius:8px;"
+    "font-size:14px;font-weight:600}"
+    # main
+    ".page{flex:1;display:flex;align-items:center;justify-content:center;padding:40px 24px}"
+    ".card{width:100%;max-width:440px;background:var(--card);border-radius:16px;"
+    "padding:36px 28px;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.12)}"
+    ".badge{width:72px;height:72px;border-radius:50%;margin:0 auto 18px;"
+    "display:flex;align-items:center;justify-content:center;font-size:38px;"
+    "color:#fff;font-weight:700}"
+    ".valid .badge{background:#3645ff}.invalid .badge{background:#d64545}"
+    ".card h1{font-size:22px;margin:0 0 8px}"
+    ".muted{color:var(--muted);font-size:14px;line-height:1.5;margin:0 0 22px}"
+    ".details{text-align:left;border-top:1px solid var(--line);margin-bottom:20px}"
+    ".row{display:flex;justify-content:space-between;gap:16px;padding:12px 2px;"
+    "border-bottom:1px solid var(--line);font-size:14px}"
+    ".k{color:var(--muted);flex:0 0 auto}.v{font-weight:600;text-align:right}"
+    ".brand{font-size:12px;letter-spacing:.04em;color:var(--muted);margin:0}"
+    # footer
+    ".site-footer{background:var(--head);color:#cbd5e1;margin-top:auto}"
+    ".ftop{display:flex;flex-wrap:wrap;gap:32px;justify-content:space-between;"
+    "padding-top:40px;padding-bottom:28px}"
+    ".fbrand{max-width:260px}.fbrand .logo{color:#fff;margin-bottom:10px}"
+    ".fbrand p{font-size:13px;color:#94a3b8;margin:0;line-height:1.5}"
+    ".fcols{display:flex;flex-wrap:wrap;gap:40px}"
+    ".fcol h4{font-size:13px;color:#fff;margin:0 0 12px;font-weight:600}"
+    ".fcol ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}"
+    ".fcol a{font-size:13px;color:#94a3b8}.fcol a:hover{color:#fff}"
+    ".fbottom{border-top:1px solid rgba(255,255,255,.08);padding-top:16px;"
+    "padding-bottom:24px;font-size:12px;color:#94a3b8}"
+    "@media(max-width:640px){.ftop{flex-direction:column;gap:24px}"
+    ".fcols{gap:28px}.nav-cta{padding:8px 12px}}"
+    "</style>"
+)
+
+
+@app.get(PREFIX + "/cert/verify", response_class=HTMLResponse)
+def cert_verify(t: str = ""):
+    """AI Engineer сертификатын QR-ыг уншихад дуудагдах лавлагааны хуудас.
+    Токеныг DB-гүйгээр HMAC-SHA256-аар шалгаж, зөв бол сертификатын мэдээллийг
+    харуулна; буруу/өөрчлөгдсөн бол 'Хүчингүй' хуудас буцаана."""
+    data = verify_cert_token(t)
+    status = 200 if data else 400
+    return HTMLResponse(_verify_page(data), status_code=status)
 
 
 def _build_pdf(body: dict, signature: str | None) -> bytes:
