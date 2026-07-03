@@ -246,7 +246,7 @@ def fill_ai_certificate(student: dict, base_url: str = "") -> bytes:
     full_name = (first_name + " " + last_name).strip()
     nsize = _fit_size(name_font, full_name, _NAME_MAXW, _NAME_SIZE, floor=20.0)
     ntw = name_font.text_length(full_name, fontsize=nsize)
-    pg.insert_text((_NAME_CENTER_X - ntw / 2, _NAME_UNDERLINE_Y - 6.4), full_name,
+    pg.insert_text((_NAME_CENTER_X - ntw / 2, _NAME_UNDERLINE_Y - 11.0), full_name,
                    fontfile=name_font_path, fontname="cname",
                    fontsize=nsize, color=INK)
 
