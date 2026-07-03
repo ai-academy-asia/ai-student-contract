@@ -140,6 +140,16 @@ def _pick_font(candidates: list[str]) -> str | None:
     return None
 
 
+def _find_rect(pg, token: str, fallback: "fitz.Rect | None"):
+    """Placeholder-ийг search_for-оор олж эхний rect-ийг буцаана (олдохгүй бол
+    fallback). Template өөрчлөгдсөн ч байрлалыг динамикаар олж мөрдөнө."""
+    try:
+        hits = pg.search_for(token)
+    except Exception:  # noqa: BLE001
+        hits = []
+    return hits[0] if hits else fallback
+
+
 # --- Мэдээлэл -----------------------------------------------------------------
 def _load_students() -> list[dict]:
     try:
@@ -215,17 +225,35 @@ def fill_ai_certificate(student: dict, base_url: str = "") -> bytes:
     doc = fitz.open(str(TEMPLATE))
     pg = doc[0]
 
+    # --- Placeholder-уудыг динамикаар олох (template өөрчлөгдсөн ч мөрдөнө) ---
+    cert_no_rect = _find_rect(pg, "#certificate_no", _CERT_NO_RECT)
+    fn_rect = _find_rect(pg, "#firstname", None)
+    ln_rect = _find_rect(pg, "#lastname", None)
+    if fn_rect and ln_rect:
+        name_rect = fitz.Rect(min(fn_rect.x0, ln_rect.x0), min(fn_rect.y0, ln_rect.y0),
+                              max(fn_rect.x1, ln_rect.x1), max(fn_rect.y1, ln_rect.y1))
+    else:
+        name_rect = fn_rect or ln_rect or _NAME_RECT
+    date_rect = _find_rect(pg, "#date", _DATE_RECT)
+    # Нэрийн redaction нь "is hereby awarded to" мөртэй огтолж түүнийг устгахаас
+    # сэргийлж, redaction-ийн дээд хязгаарыг тэр мөрийн доор шахна.
+    awarded = _find_rect(pg, "is hereby awarded to", None)
+    name_top = name_rect.y0
+    if awarded and awarded.y1 > name_rect.y0:
+        name_top = awarded.y1 + 1.5
+
     # 1) Placeholder текстийг устгах (redaction). fill=False → доорх цаас (сул
     #    градиент/текстур) хэвээр харагдана; цагаанаар дүүргэвэл бүдэг тэгш өнцөгт
     #    үлдэнэ.
-    pg.add_redact_annot(_CERT_NO_RECT, fill=False)
-    pg.add_redact_annot(_NAME_RECT, fill=False)
+    pg.add_redact_annot(cert_no_rect, fill=False)
+    pg.add_redact_annot(fitz.Rect(name_rect.x0, name_top, name_rect.x1, name_rect.y1),
+                        fill=False)
     pg.add_redact_annot(
         fitz.Rect(_CAPSTONE_VALUE_X0 - 1.5, _CAPSTONE_LINE.y0 - 1,
                   _CAPSTONE_LINE.x1 + 2, _CAPSTONE_LINE.y1 + 1),
         fill=False,
     )
-    pg.add_redact_annot(_DATE_RECT, fill=False)
+    pg.add_redact_annot(date_rect, fill=False)
     # Жишээ QR-ийг арилгах (доор нь шинэ QR тавина).
     pg.add_redact_annot(_QR_RECT, fill=False)
     pg.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
@@ -236,17 +264,18 @@ def fill_ai_certificate(student: dict, base_url: str = "") -> bytes:
     date_font = fitz.Font(fontfile=date_font_path)
 
     # 2) #certificate_no — Open Sans 14, төвлөрсөн (baseline нь placeholder-ийн доод хэсэг).
-    cx = (_CERT_NO_RECT.x0 + _CERT_NO_RECT.x1) / 2
+    cx = (cert_no_rect.x0 + cert_no_rect.x1) / 2
     tw = body_font.text_length(student_id, fontsize=_CERT_NO_SIZE)
-    pg.insert_text((cx - tw / 2, _CERT_NO_RECT.y1 - 4.2), student_id,
+    pg.insert_text((cx - tw / 2, cert_no_rect.y1 - 4.2), student_id,
                    fontfile=body_font_path, fontname="osbody",
                    fontsize=_CERT_NO_SIZE, color=INK)
 
-    # 3) Нэр овог — Liana 46, төвлөрсөн; доорх зураас (y≈267)-аас жоохон дээш.
+    # 3) Нэр овог — Liana, төвлөрсөн; placeholder-ийн голд, доод захаас жоохон дээш.
     full_name = (first_name + " " + last_name).strip()
-    nsize = _fit_size(name_font, full_name, _NAME_MAXW, _NAME_SIZE, floor=20.0)
+    name_cx = (name_rect.x0 + name_rect.x1) / 2
+    nsize = _fit_size(name_font, full_name, name_rect.width - 8, _NAME_SIZE, floor=20.0)
     ntw = name_font.text_length(full_name, fontsize=nsize)
-    pg.insert_text((_NAME_CENTER_X - ntw / 2, _NAME_UNDERLINE_Y - 11.0), full_name,
+    pg.insert_text((name_cx - ntw / 2, name_rect.y1 - 12.0), full_name,
                    fontfile=name_font_path, fontname="cname",
                    fontsize=nsize, color=INK)
 
@@ -264,8 +293,8 @@ def fill_ai_certificate(student: dict, base_url: str = "") -> bytes:
     yday = date.today() - timedelta(days=1)
     date_str = f"{yday.strftime('%B')} {yday.day}, {yday.year}"
     dtw = date_font.text_length(date_str, fontsize=_DATE_SIZE)
-    dcx = (_DATE_RECT.x0 + _DATE_RECT.x1) / 2
-    pg.insert_text((dcx - dtw / 2, _DATE_RECT.y1 - 5.5), date_str,
+    dcx = (date_rect.x0 + date_rect.x1) / 2
+    pg.insert_text((dcx - dtw / 2, date_rect.y1 - 9.0), date_str,
                    fontfile=date_font_path, fontname="osdate",
                    fontsize=_DATE_SIZE, color=INK)
 
