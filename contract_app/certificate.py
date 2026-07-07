@@ -115,7 +115,6 @@ def fill_certificate(class_code: str | None, first_name: str | None,
         raise FileNotFoundError(f"No certificate template for classCode={class_code!r}")
 
     name = latin_full_name(first_name, last_name)
-    date_str = _fmt_date(today)
     script_font = _pick_font(SCRIPT_FONT_CANDIDATES)
     date_font = _pick_font(DATE_FONT_CANDIDATES)
     if not script_font or not date_font:
@@ -139,11 +138,11 @@ def fill_certificate(class_code: str | None, first_name: str | None,
         pg.draw_rect(fitz.Rect(x, _NY0, x + 1.4, _NY1), color=None,
                      fill=(r / 255, g / 255, b / 255))
 
-    # #date-г яг бүрхэх (', 2026'-г хэвээр)
+    # #date ба ', 2026'-г бүхэлд нь дэвсгэрээр бүрхэх (доор бүтэн огноог томоор зурна)
     dr = pg.search_for("#date")[0]
     comma = pg.search_for(", 2026")[0]
     dbg = bg(dr.x0 - 8, (dr.y0 + dr.y1) / 2)
-    pg.draw_rect(fitz.Rect(dr.x0 - 4, dr.y0 - 7, dr.x1 + 0.5, dr.y1 + 8),
+    pg.draw_rect(fitz.Rect(dr.x0 - 6, dr.y0 - 16, comma.x1 + 8, dr.y1 + 16),
                  color=None, fill=tuple(c / 255 for c in dbg))
 
     # 2) нэр — голлуулж, script фонтоор (урт нэр бол багасгаж багтаана)
@@ -155,13 +154,17 @@ def fill_certificate(class_code: str | None, first_name: str | None,
     pg.insert_text((pg.rect.width / 2 - tw / 2, _NAME_BASELINE), name,
                    fontfile=script_font, fontname="cscript", fontsize=nsize, color=NAVY)
 
-    # огноо — #date-ийн эхэлж байсан байрлалд, бүдүүн фонтоор, таслалд хүртэл багтаах
+    # огноо — бүтэн '<Сар> <өдөр>, <жил>'-ийг ТОМООР, анхны огнооны бүлгийн голд
     df = fitz.Font(fontfile=date_font)
-    maxw = comma.x0 - dr.x0 - 6
-    dsize = 32.0
-    while dsize > 8 and df.text_length(date_str, fontsize=dsize) > maxw:
-        dsize -= 0.5
-    pg.insert_text((dr.x0, _DATE_BASELINE), date_str,
+    try:
+        _d = datetime.strptime((today or "").strip(), "%Y-%m-%d").date()
+    except ValueError:
+        _d = date.today()
+    full_date = f"{_d.strftime('%B')} {_d.day}, {_d.year}"
+    dsize = 46.0
+    center_x = (dr.x0 + comma.x1) / 2
+    tw = df.text_length(full_date, fontsize=dsize)
+    pg.insert_text((center_x - tw / 2, _DATE_BASELINE), full_date,
                    fontfile=date_font, fontname="cdate", fontsize=dsize, color=NAVY)
 
     return doc.write(deflate=True, garbage=3)

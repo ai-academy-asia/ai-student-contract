@@ -18,7 +18,7 @@ from fastapi.responses import Response, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .students import get_student_by_id
+from .students import get_student_by_id, get_cert_student_by_id
 from .fill import build_values, program_pdf, fill_contract, discount_pct
 from .certificate import fill_certificate, latin_full_name
 from .ai_certificate import fill_ai_certificate, get_engineer_by_id, verify_cert_token
@@ -95,7 +95,8 @@ def api_student(student_id: str):
 @app.get(PREFIX + "/_api/certificate/{student_id}")
 def api_certificate(student_id: str):
     """Хүүхдийн id-гаар нэр/овгийг тавьсан төгсөлтийн сертификатыг (PDF) буцаана."""
-    student = get_student_by_id(student_id)
+    # Эхлээд гэрээний суралцагч, дараа нь зөвхөн сертификатын жагсаалт.
+    student = get_student_by_id(student_id) or get_cert_student_by_id(student_id)
     if not student:
         return JSONResponse({"error": "Олдсонгүй"}, status_code=404)
     try:

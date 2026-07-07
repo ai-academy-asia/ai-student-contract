@@ -128,7 +128,7 @@ _NAME_MAXW = 520.0                                          # зурааны ө�
 _QR_RECT = fitz.Rect(86.3, 431.6, 164.9, 510.0)
 
 _CERT_NO_SIZE = 14.0
-_NAME_SIZE = 54.0
+_NAME_SIZE = 58.0
 _CAPSTONE_SIZE = 12.0
 _DATE_SIZE = 17.0
 
@@ -302,7 +302,7 @@ def fill_ai_certificate(student: dict, base_url: str = "") -> bytes:
     name_cx = (name_rect.x0 + name_rect.x1) / 2
     nsize = _fit_size(name_font, full_name, name_rect.width - 8, _NAME_SIZE, floor=20.0)
     ntw = name_font.text_length(full_name, fontsize=nsize)
-    pg.insert_text((name_cx - ntw / 2, name_rect.y1 - 20.0), full_name,
+    pg.insert_text((name_cx - ntw / 2, name_rect.y1 - 24.0), full_name,
                    fontfile=name_font_path, fontname="cname",
                    fontsize=nsize, color=INK)
 
